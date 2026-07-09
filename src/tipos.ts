@@ -82,6 +82,8 @@ export interface ResultadoExtracaoResumo {
 
 export interface ResultadoResumoMovimentacao {
   numero_processo: string;
+  fonte_dados?: "historico_remoto" | "snapshot_local" | "extracao_processo";
+  consultado_remotamente_em?: string;
   snapshot?: string;
   caminho_processo_json?: string;
   extraido_em: string;
@@ -120,6 +122,13 @@ export interface ResultadoLoteExtracaoItem {
   numero_processo: string;
   ok: boolean;
   resultado_extracao?: ResultadoExtracaoResumo;
+  resumo_movimentacao?: ResultadoResumoMovimentacao;
+  erro?: string;
+}
+
+export interface ResultadoLoteMovimentacaoItem {
+  numero_processo: string;
+  ok: boolean;
   resumo_movimentacao?: ResultadoResumoMovimentacao;
   erro?: string;
 }

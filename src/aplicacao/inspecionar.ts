@@ -65,6 +65,8 @@ export function resumirExtracao(resultado: ResultadoExtracao): ResultadoExtracao
 export function resumirMovimentacaoProcesso(args: {
   processo: ProcessoExtraido;
   quantidade: number;
+  fonteDados?: ResultadoResumoMovimentacao["fonte_dados"];
+  consultadoRemotamenteEm?: string;
   snapshot?: string;
   caminhoProcessoJson?: string;
 }): ResultadoResumoMovimentacao {
@@ -75,6 +77,8 @@ export function resumirMovimentacaoProcesso(args: {
 
   return {
     numero_processo: args.processo.numero_processo,
+    fonte_dados: args.fonteDados ?? (args.snapshot ? "snapshot_local" : "extracao_processo"),
+    consultado_remotamente_em: args.consultadoRemotamenteEm,
     snapshot: args.snapshot,
     caminho_processo_json: args.caminhoProcessoJson,
     extraido_em: args.processo.extraido_em,

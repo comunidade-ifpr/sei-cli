@@ -18,7 +18,7 @@ Este CLI não substitui o SEI nem altera processos: ele apenas ajuda a criar sna
 - Lista últimos documentos, últimos eventos de histórico e última atualização do snapshot.
 - Compara um snapshot local com o histórico remoto para indicar se uma nova extração é recomendada.
 - Imprime resumos humanos em português, JSON completo com `--json`, JSON resumido com `--json --resumo` e JSON Lines em lote com `--jsonl`.
-- Gera resumo operacional de movimentação com as últimas movimentações em texto pronto para reuso em sistemas como Notion.
+- Gera resumo operacional de movimentação com as últimas movimentações em texto pronto para reuso em sistemas como Notion, com opção de consulta leve ao histórico remoto sem baixar o processo completo.
 
 ## Requisitos
 
@@ -53,6 +53,7 @@ Use um número de processo no formato `00000.000000/0000-00`.
 bun run sei extrair processo 00000.000000/0000-00
 bun run sei extrair processo 00000.000000/0000-00 --json --resumo
 bun run sei extrair ultimas-movimentacoes 00000.000000/0000-00 --ultimos 4 --json
+bun run sei extrair ultimas-movimentacoes lote processos.txt --ultimos 4 --jsonl
 bun run sei extrair lote processos.txt --ultimos 4 --jsonl
 bun run sei atualizar processo 00000.000000/0000-00 --snapshot-auto --json --resumo
 bun run sei resumir movimentacao 00000.000000/0000-00 --ultimos 4 --json
@@ -103,6 +104,8 @@ bun run sei resumir movimentacao <runDir> --ultimos 4 --json
 
 `historico-recente` e `resumir movimentacao` retornam também `data_abertura_sei`, `data_ultima_mov_sei`, `ultima_movimentacao_sei_texto`, `sei_link_processo` e `historico_usado`.
 
+`extrair ultimas-movimentacoes` consulta o histórico remoto do SEI no momento da execução e retorna `fonte_dados: "historico_remoto"` e `consultado_remotamente_em`. Use esse comando quando o objetivo for atualizar campos operacionais como `Data Última mov. SEI` e `Última movimentação SEI`.
+
 ## Verificar atualização
 
 Use `verificar atualizacao` quando já existe uma fotografia local e você precisa saber se ela ainda corresponde ao histórico remoto do SEI:
@@ -143,6 +146,14 @@ bun run sei extrair lote processos.txt --ultimos 4 --jsonl --quiet
 ```
 
 Cada linha JSON contém `numero_processo`, `ok`, um resumo curto da extração e `resumo_movimentacao`. O comando continua nos processos seguintes quando um item falha e termina com código diferente de zero se qualquer processo falhar.
+
+Para atualizar apenas dados de andamento, prefira o lote leve de últimas movimentações. Ele consulta o histórico remoto e não baixa o ZIP completo do processo:
+
+```bash
+bun run sei extrair ultimas-movimentacoes lote processos.txt --ultimos 4 --jsonl --quiet
+```
+
+Cada linha JSON contém `numero_processo`, `ok` e `resumo_movimentacao`. O campo `data_ultima_mov_sei` é obrigatório para itens `ok`; se o histórico remoto não retornar data, o item falha para evitar que integrações apaguem campos críticos.
 
 ## Estrutura gerada
 
@@ -186,7 +197,7 @@ bun run sei verificar atualizacao processo 00000.000000/0000-00 --snapshot <runD
 
 Para respostas baseadas em documentos do snapshot, cite o número SEI, o título e o caminho relativo do documento. Para respostas baseadas no andamento processual, cite também a data e a descrição do item em `historico[]`.
 
-Para integrações automatizadas, trate `processo.json` como fonte canônica. Use `--json --resumo`, `historico-recente`, `resumir movimentacao` ou `extrair lote --jsonl` em vez de parsear a saída JSON completa de `extrair processo --json`.
+Para integrações automatizadas que precisam de andamento atual, use `extrair ultimas-movimentacoes ... --json` ou `extrair ultimas-movimentacoes lote ... --jsonl`, pois esses comandos consultam o histórico remoto. Para análise documental de uma fotografia já extraída, trate `processo.json` como fonte canônica e use `historico-recente`, `resumir movimentacao` ou `extrair lote --jsonl` em vez de parsear a saída JSON completa de `extrair processo --json`.
 
 ## Desenvolvimento
 

@@ -125,6 +125,7 @@ describe("CLI", () => {
     expect(resultado.code).toBe(0);
     expect(resultado.stdout).toContain("sei extrair processo");
     expect(resultado.stdout).toContain("sei extrair lote");
+    expect(resultado.stdout).toContain("sei extrair ultimas-movimentacoes lote");
     expect(resultado.stdout).toContain("sei resumir movimentacao");
     expect(resultado.stdout).toContain("sei verificar atualizacao processo");
     expect(resultado.stdout).toContain("Variáveis para extrair do SEI");
@@ -254,6 +255,24 @@ describe("CLI", () => {
     await writeFile(arquivo, "sem processos aqui\n", "utf-8");
 
     const resultado = await rodarCli(["extrair", "lote", arquivo, "--jsonl"]);
+
+    expect(resultado.code).toBe(1);
+    expect(resultado.stderr).toContain("Nenhum número de processo SEI encontrado");
+  });
+
+  test("falha em lote de últimas movimentações sem arquivo", async () => {
+    const resultado = await rodarCli(["extrair", "ultimas-movimentacoes", "lote", "--jsonl"]);
+
+    expect(resultado.code).toBe(1);
+    expect(resultado.stderr).toContain("Uso esperado: sei extrair ultimas-movimentacoes lote");
+  });
+
+  test("falha em lote de últimas movimentações sem números de processo", async () => {
+    const base = await criarTempDir();
+    const arquivo = path.join(base, "processos.txt");
+    await writeFile(arquivo, "sem processos aqui\n", "utf-8");
+
+    const resultado = await rodarCli(["extrair", "ultimas-movimentacoes", "lote", arquivo, "--jsonl"]);
 
     expect(resultado.code).toBe(1);
     expect(resultado.stderr).toContain("Nenhum número de processo SEI encontrado");

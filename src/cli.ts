@@ -28,6 +28,7 @@ import type {
   ResultadoAtualizacaoProcesso,
   ResultadoExtracao,
   ResultadoLoteExtracaoItem,
+  ResultadoLoteMovimentacaoItem,
   ResultadoResumoMovimentacao,
 } from "./tipos";
 
@@ -319,6 +320,45 @@ async function executarResumoMovimentacao(valor: string, opcoes: OpcoesCli) {
   });
 }
 
+function linkProcessoSei(baseUrl: string | undefined, idProcedimento: string | undefined) {
+  if (!baseUrl || !idProcedimento) {
+    return undefined;
+  }
+  return `${baseUrl.replace(/\/$/, "")}/sei/controlador.php?acao=procedimento_trabalhar&id_procedimento=${idProcedimento}`;
+}
+
+async function executarUltimasMovimentacoesRemotas(numeroProcesso: string, opcoes: OpcoesCli) {
+  const numero = validarNumeroProcessoSei(numeroProcesso);
+  const quantidade = validarQuantidade(opcoes.ultimos, 4);
+  const consultadoEm = new Date().toISOString();
+  const remoto = await consultarHistoricoProcessoSei({ numeroProcesso: numero });
+  const processo: ProcessoExtraido = {
+    versao_schema: 1,
+    numero_processo: numero,
+    extraido_em: consultadoEm,
+    origem: "playwright-sei",
+    sei_base_url: remoto.sei_base_url,
+    sei_id_procedimento: remoto.sei_id_procedimento,
+    sei_link_processo: linkProcessoSei(remoto.sei_base_url, remoto.sei_id_procedimento),
+    historico: remoto.historico,
+    documentos: [],
+    eventos: [],
+    artefatos: {
+      diretorio_documentos: "",
+    },
+  };
+  const resumo = resumirMovimentacaoProcesso({
+    processo,
+    quantidade,
+    fonteDados: "historico_remoto",
+    consultadoRemotamenteEm: consultadoEm,
+  });
+  if (!resumo.data_ultima_mov_sei) {
+    throw new Error(`Histórico remoto de ${numero} não retornou Data Última mov. SEI.`);
+  }
+  return resumo;
+}
+
 function extrairNumerosProcessos(conteudo: string) {
   const vistos = new Set<string>();
   const numeros: string[] = [];
@@ -392,10 +432,63 @@ async function executarLoteExtracao(arquivo: string, opcoes: OpcoesCli) {
   }
 }
 
+async function executarLoteUltimasMovimentacoes(arquivo: string, opcoes: OpcoesCli) {
+  const caminho = path.resolve(arquivo);
+  const numeros = extrairNumerosProcessos(await readFile(caminho, "utf-8"));
+  if (!numeros.length) {
+    throw new Error(`Nenhum número de processo SEI encontrado em ${caminho}.`);
+  }
+  if (opcoes.saida) {
+    throw new Error("Não use --saida com extração de últimas movimentações em lote.");
+  }
+
+  const resultados: ResultadoLoteMovimentacaoItem[] = [];
+  for (const [indice, numeroProcesso] of numeros.entries()) {
+    registrarProgresso(opcoes, `[${indice + 1}/${numeros.length}] Consultando histórico remoto ${numeroProcesso}.`);
+    try {
+      const resumo = await executarUltimasMovimentacoesRemotas(numeroProcesso, opcoes);
+      const item: ResultadoLoteMovimentacaoItem = {
+        numero_processo: numeroProcesso,
+        ok: true,
+        resumo_movimentacao: resumo,
+      };
+      resultados.push(item);
+      if (opcoes.jsonl) {
+        imprimirJsonl(item);
+      }
+    } catch (error) {
+      const item: ResultadoLoteMovimentacaoItem = {
+        numero_processo: numeroProcesso,
+        ok: false,
+        erro: error instanceof Error ? error.message : String(error),
+      };
+      resultados.push(item);
+      if (opcoes.jsonl) {
+        imprimirJsonl(item);
+      } else {
+        registrarProgresso(opcoes, `Falha ao consultar ${numeroProcesso}: ${item.erro}`);
+      }
+    }
+  }
+
+  if (opcoes.json && !opcoes.jsonl) {
+    imprimirJson(resultados);
+  } else if (!opcoes.jsonl) {
+    const sucessos = resultados.filter((item) => item.ok).length;
+    const falhas = resultados.length - sucessos;
+    console.log(`Lote concluído: ${sucessos} sucesso(s), ${falhas} falha(s).`);
+  }
+
+  if (resultados.some((item) => !item.ok)) {
+    process.exitCode = 1;
+  }
+}
+
 function imprimirAjuda() {
   console.log(`Uso:
   sei extrair processo <numero> [--saida <dir>] [--json] [--resumo] [--quiet]
   sei extrair ultimas-movimentacoes <numero> [--ultimos 4] [--json] [--quiet]
+  sei extrair ultimas-movimentacoes lote <arquivo.txt> [--ultimos 4] [--json|--jsonl] [--quiet]
   sei extrair lote <arquivo.txt> [--ultimos 4] [--json|--jsonl] [--quiet]
   sei atualizar processo <numero> (--snapshot <runDir>|--snapshot-auto) [--json] [--resumo] [--quiet]
   sei resumir movimentacao <numero|runDir> [--ultimos 4] [--snapshot <runDir>] [--snapshot-auto] [--atualizar] [--json]
@@ -413,6 +506,10 @@ Automação:
   --quiet        Suprime progresso em stderr; arquivos de log do snapshot continuam sendo gravados.
   --jsonl        Em lote, imprime uma linha JSON por processo.
   --snapshot-auto Usa o snapshot mais recente em dados/sei/<processo>/ quando aplicável.
+
+Notas:
+  extrair ultimas-movimentacoes consulta o histórico remoto do SEI e não depende de snapshot local.
+  resumir movimentacao --snapshot-auto resume o snapshot local mais recente; use --atualizar para comparar com o SEI remoto.
 
 Variáveis para extrair do SEI:
   SEI_USUARIO
@@ -445,7 +542,15 @@ async function executar(args: string[]) {
       if (!valor) {
         throw new Error("Uso esperado: sei extrair ultimas-movimentacoes <numero>.");
       }
-      const resultado = await executarResumoMovimentacao(valor, opcoes);
+      if (valor === "lote") {
+        const arquivo = args[3];
+        if (!arquivo || arquivo.startsWith("--")) {
+          throw new Error("Uso esperado: sei extrair ultimas-movimentacoes lote <arquivo.txt>.");
+        }
+        await executarLoteUltimasMovimentacoes(arquivo, opcoes);
+        return;
+      }
+      const resultado = await executarUltimasMovimentacoesRemotas(valor, opcoes);
       opcoes.json ? imprimirJson(resultado) : imprimirResumoMovimentacao(resultado);
       return;
     }
