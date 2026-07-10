@@ -1,3 +1,8 @@
+## Very Important
+
+- **ALPHA PHASE**: structural changes are welcome. Prefer the right architecture over local patches.
+- This repository is a VERY EARLY WIP. Proposing sweeping changes that improve long-term maintainability is encouraged.
+
 ## Commits
 
 - Mensagens de commit devem ser explicativas, não apenas uma linha curta.

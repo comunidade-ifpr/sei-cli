@@ -7,9 +7,11 @@ import { carregarEnvLocal } from "./infra/env";
 import { encontrarSnapshotMaisRecenteProcesso } from "./infra/arquivos";
 import { lerDiretorioProcesso, lerZipProcesso } from "./infra/local";
 import {
+  abrirSessaoConsultaHistoricoSei,
   consultarHistoricoProcessoSei,
   extrairProcessoSei,
   localizarLinkProcessoSei,
+  type SessaoConsultaHistoricoSei,
 } from "./infra/playwrightSei";
 import {
   carregarProcessoParaInspecao,
@@ -49,6 +51,7 @@ interface OpcoesCli {
 
 const PROCESSO_RE = /\d{5}\.\d{6}\/\d{4}-\d{2}/g;
 const PROCESSO_EXATO_RE = /^\d{5}\.\d{6}\/\d{4}-\d{2}$/;
+const TIMEOUT_CONSULTA_LOTE_MS = 60_000;
 
 function obterValorFlag(args: string[], nome: string) {
   const indice = args.indexOf(nome);
@@ -99,6 +102,22 @@ function imprimirJsonl(valor: unknown) {
 function registrarProgresso(opcoes: OpcoesCli, mensagem: string) {
   if (!opcoes.quiet) {
     console.error(mensagem);
+  }
+}
+
+async function executarComTimeout<T>(operacao: Promise<T>, timeoutMs: number, mensagem: string) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operacao,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(mensagem)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -327,11 +346,21 @@ function linkProcessoSei(baseUrl: string | undefined, idProcedimento: string | u
   return `${baseUrl.replace(/\/$/, "")}/sei/controlador.php?acao=procedimento_trabalhar&id_procedimento=${idProcedimento}`;
 }
 
-async function executarUltimasMovimentacoesRemotas(numeroProcesso: string, opcoes: OpcoesCli) {
+async function executarUltimasMovimentacoesRemotas(
+  numeroProcesso: string,
+  opcoes: OpcoesCli,
+  sessao?: SessaoConsultaHistoricoSei,
+) {
   const numero = validarNumeroProcessoSei(numeroProcesso);
   const quantidade = validarQuantidade(opcoes.ultimos, 4);
   const consultadoEm = new Date().toISOString();
-  const remoto = await consultarHistoricoProcessoSei({ numeroProcesso: numero });
+  const remoto = sessao
+    ? await executarComTimeout(
+        sessao.consultar({ numeroProcesso: numero }),
+        TIMEOUT_CONSULTA_LOTE_MS,
+        `Consulta de ${numero} excedeu ${TIMEOUT_CONSULTA_LOTE_MS / 1_000} segundos.`,
+      )
+    : await consultarHistoricoProcessoSei({ numeroProcesso: numero });
   const processo: ProcessoExtraido = {
     versao_schema: 1,
     numero_processo: numero,
@@ -443,32 +472,61 @@ async function executarLoteUltimasMovimentacoes(arquivo: string, opcoes: OpcoesC
   }
 
   const resultados: ResultadoLoteMovimentacaoItem[] = [];
-  for (const [indice, numeroProcesso] of numeros.entries()) {
-    registrarProgresso(opcoes, `[${indice + 1}/${numeros.length}] Consultando histórico remoto ${numeroProcesso}.`);
-    try {
-      const resumo = await executarUltimasMovimentacoesRemotas(numeroProcesso, opcoes);
-      const item: ResultadoLoteMovimentacaoItem = {
-        numero_processo: numeroProcesso,
-        ok: true,
-        resumo_movimentacao: resumo,
-      };
-      resultados.push(item);
-      if (opcoes.jsonl) {
-        imprimirJsonl(item);
-      }
-    } catch (error) {
-      const item: ResultadoLoteMovimentacaoItem = {
-        numero_processo: numeroProcesso,
-        ok: false,
-        erro: error instanceof Error ? error.message : String(error),
-      };
-      resultados.push(item);
-      if (opcoes.jsonl) {
-        imprimirJsonl(item);
-      } else {
-        registrarProgresso(opcoes, `Falha ao consultar ${numeroProcesso}: ${item.erro}`);
+  let sessao = await abrirSessaoConsultaHistoricoSei();
+  try {
+    for (const [indice, numeroProcesso] of numeros.entries()) {
+      registrarProgresso(opcoes, `[${indice + 1}/${numeros.length}] Consultando histórico remoto ${numeroProcesso}.`);
+      try {
+        let resumo: ResultadoResumoMovimentacao | undefined;
+        let primeiroErro: unknown;
+        for (let tentativa = 0; tentativa < 2; tentativa += 1) {
+          try {
+            resumo = await executarUltimasMovimentacoesRemotas(numeroProcesso, opcoes, sessao);
+            break;
+          } catch (error) {
+            if (tentativa > 0) {
+              throw new Error(
+                `Falha após recriar a sessão: ${error instanceof Error ? error.message : String(error)}`,
+                { cause: primeiroErro },
+              );
+            }
+            primeiroErro = error;
+            registrarProgresso(
+              opcoes,
+              `Consulta de ${numeroProcesso} falhou; recriando a sessão e tentando novamente.`,
+            );
+            await sessao.fechar();
+            sessao = await abrirSessaoConsultaHistoricoSei();
+          }
+        }
+        if (!resumo) {
+          throw new Error(`Consulta de ${numeroProcesso} terminou sem resultado.`);
+        }
+        const item: ResultadoLoteMovimentacaoItem = {
+          numero_processo: numeroProcesso,
+          ok: true,
+          resumo_movimentacao: resumo,
+        };
+        resultados.push(item);
+        if (opcoes.jsonl) {
+          imprimirJsonl(item);
+        }
+      } catch (error) {
+        const item: ResultadoLoteMovimentacaoItem = {
+          numero_processo: numeroProcesso,
+          ok: false,
+          erro: error instanceof Error ? error.message : String(error),
+        };
+        resultados.push(item);
+        if (opcoes.jsonl) {
+          imprimirJsonl(item);
+        } else {
+          registrarProgresso(opcoes, `Falha ao consultar ${numeroProcesso}: ${item.erro}`);
+        }
       }
     }
+  } finally {
+    await sessao.fechar();
   }
 
   if (opcoes.json && !opcoes.jsonl) {

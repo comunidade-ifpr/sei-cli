@@ -155,6 +155,8 @@ bun run sei extrair ultimas-movimentacoes lote processos.txt --ultimos 4 --jsonl
 
 Cada linha JSON contém `numero_processo`, `ok` e `resumo_movimentacao`. O campo `data_ultima_mov_sei` é obrigatório para itens `ok`; se o histórico remoto não retornar data, o item falha para evitar que integrações apaguem campos críticos.
 
+Esse lote reutiliza uma sessão autenticada do SEI entre os processos. Cada consulta tem limite de 60 segundos; na primeira falha, a CLI recria a sessão e tenta o processo mais uma vez antes de registrar o erro e continuar o lote. A saída JSONL permanece incremental.
+
 ## Estrutura gerada
 
 Cada execução cria uma pasta parecida com:

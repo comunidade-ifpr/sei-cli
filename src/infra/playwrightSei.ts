@@ -1,5 +1,13 @@
 import { writeFile } from "node:fs/promises";
-import { chromium, type Dialog, type Frame, type Locator, type Page } from "playwright";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Dialog,
+  type Frame,
+  type Locator,
+  type Page,
+} from "playwright";
 import type { DocumentoProcesso, EventoExtracao } from "../tipos";
 import {
   combinarDocumentosArvoreSei,
@@ -907,98 +915,135 @@ export async function localizarLinkProcessoSei(args: { numeroProcesso: string })
   }
 }
 
-export async function consultarHistoricoProcessoSei(args: { numeroProcesso: string }) {
+export interface SessaoConsultaHistoricoSei {
+  consultar(args: { numeroProcesso: string }): Promise<{
+    numero_processo: string;
+    sei_base_url: string;
+    sei_id_procedimento: string | undefined;
+    historico: Awaited<ReturnType<typeof coletarHistoricoProcesso>>;
+  }>;
+  fechar(): Promise<void>;
+}
+
+async function consultarHistoricoProcessoNaPagina(args: {
+  numeroProcesso: string;
+  page: Page;
+  baseUrl: string;
+}) {
   const numeroProcesso = validarNumeroProcessoSei(args.numeroProcesso);
-  const baseUrl = process.env.SEI_BASE_URL?.trim() || "https://sei.ifpr.edu.br";
-  const headless = lerBooleano(process.env.SEI_HEADLESS, true);
+  const { page, baseUrl } = args;
   const seletorPesquisa = "#txtPesquisaRapida";
 
-  const browser = await chromium.launch({ headless });
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
 
-  try {
-    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
-
-    const sessaoAtiva = async () => {
-      for (const frame of localizarFramesRelevantes(page)) {
-        if ((await frame.locator(seletorPesquisa).count().catch(() => 0)) > 0) {
-          return true;
-        }
+  const sessaoAtiva = async () => {
+    for (const frame of localizarFramesRelevantes(page)) {
+      if ((await frame.locator(seletorPesquisa).count().catch(() => 0)) > 0) {
+        return true;
       }
-      return page.frames().some((frame) => ["ifrArvore", "ifrVisualizacao"].includes(frame.name()));
-    };
+    }
+    return page.frames().some((frame) => ["ifrArvore", "ifrVisualizacao"].includes(frame.name()));
+  };
+
+  if (!(await sessaoAtiva())) {
+    const credenciais = lerCredenciaisSei();
+    const campoUsuario = await localizarPrimeiroLocatorNaPagina(page, [
+      () => page.locator("#txtUsuario"),
+      () => page.locator('input[name="txtUsuario"]'),
+      () => page.locator('input[id*="usuario" i]'),
+      () => page.getByLabel(/usuário|usuario/i),
+    ]);
+    const campoSenha = await localizarPrimeiroLocatorNaPagina(page, [
+      () => page.locator("#pwdSenha"),
+      () => page.locator("#txtSenha"),
+      () => page.locator('input[type="password"]'),
+      () => page.locator('input[id*="senha" i]'),
+      () => page.getByLabel(/senha/i),
+    ]);
+    const botaoAcesso = await localizarPrimeiroLocatorNaPagina(page, [
+      () => page.getByRole("button", { name: /acessar/i }),
+      () => page.locator('input[type="submit"]'),
+      () => page.locator('button[id*="acess" i]'),
+    ]);
+
+    if (!campoUsuario || !campoSenha || !botaoAcesso) {
+      throw new Error("Campos de login do SEI não localizados.");
+    }
+
+    await preencherCampo(campoUsuario, credenciais.usuario);
+    await preencherCampo(campoSenha, credenciais.senha);
+    await botaoAcesso.click();
+
+    const prazo = Date.now() + 12_000;
+    while (Date.now() < prazo && !(await sessaoAtiva())) {
+      await page.waitForLoadState("domcontentloaded", { timeout: 1_000 }).catch(() => {});
+      await page.waitForTimeout(250);
+    }
 
     if (!(await sessaoAtiva())) {
-      const credenciais = lerCredenciaisSei();
-      const campoUsuario = await localizarPrimeiroLocatorNaPagina(page, [
-        () => page.locator("#txtUsuario"),
-        () => page.locator('input[name="txtUsuario"]'),
-        () => page.locator('input[id*="usuario" i]'),
-        () => page.getByLabel(/usuário|usuario/i),
-      ]);
-      const campoSenha = await localizarPrimeiroLocatorNaPagina(page, [
-        () => page.locator("#pwdSenha"),
-        () => page.locator("#txtSenha"),
-        () => page.locator('input[type="password"]'),
-        () => page.locator('input[id*="senha" i]'),
-        () => page.getByLabel(/senha/i),
-      ]);
-      const botaoAcesso = await localizarPrimeiroLocatorNaPagina(page, [
-        () => page.getByRole("button", { name: /acessar/i }),
-        () => page.locator('input[type="submit"]'),
-        () => page.locator('button[id*="acess" i]'),
-      ]);
-
-      if (!campoUsuario || !campoSenha || !botaoAcesso) {
-        throw new Error("Campos de login do SEI não localizados.");
-      }
-
-      await preencherCampo(campoUsuario, credenciais.usuario);
-      await preencherCampo(campoSenha, credenciais.senha);
-      await botaoAcesso.click();
-
-      const prazo = Date.now() + 12_000;
-      while (Date.now() < prazo && !(await sessaoAtiva())) {
-        await page.waitForLoadState("domcontentloaded", { timeout: 1_000 }).catch(() => {});
-        await page.waitForTimeout(250);
-      }
-
-      if (!(await sessaoAtiva())) {
-        throw new Error("Falha ao autenticar no SEI. Verifique credenciais, 2FA ou sessão bloqueada.");
-      }
+      throw new Error("Falha ao autenticar no SEI. Verifique credenciais, 2FA ou sessão bloqueada.");
     }
+  }
 
-    const campoPesquisa = await localizarPrimeiroLocator(page, [
-      (frame) => frame.locator(seletorPesquisa),
-    ]);
-    if (!campoPesquisa) {
-      throw new Error("Campo de pesquisa rápida do SEI não localizado.");
-    }
+  const campoPesquisa = await localizarPrimeiroLocator(page, [
+    (frame) => frame.locator(seletorPesquisa),
+  ]);
+  if (!campoPesquisa) {
+    throw new Error("Campo de pesquisa rápida do SEI não localizado.");
+  }
 
-    await campoPesquisa.fill("");
-    await campoPesquisa.fill(numeroProcesso);
-    await Promise.all([
-      page.waitForLoadState("domcontentloaded").catch(() => undefined),
-      campoPesquisa.press("Enter"),
-    ]);
-    await page.waitForTimeout(2_000);
+  await campoPesquisa.fill("");
+  await campoPesquisa.fill(numeroProcesso);
+  await Promise.all([
+    page.waitForLoadState("domcontentloaded").catch(() => undefined),
+    campoPesquisa.press("Enter"),
+  ]);
+  await page.waitForTimeout(2_000);
 
-    if (!(await paginaProcessoContemNumero(page, numeroProcesso))) {
-      throw new Error(
-        `A pesquisa rápida do SEI não abriu uma página que contenha o processo ${numeroProcesso}.`,
-      );
-    }
+  if (!(await paginaProcessoContemNumero(page, numeroProcesso))) {
+    throw new Error(
+      `A pesquisa rápida do SEI não abriu uma página que contenha o processo ${numeroProcesso}.`,
+    );
+  }
 
+  return {
+    numero_processo: numeroProcesso,
+    sei_base_url: baseUrl,
+    sei_id_procedimento: await coletarIdProcedimentoProcesso(page),
+    historico: await coletarHistoricoProcesso(page),
+  };
+}
+
+export async function abrirSessaoConsultaHistoricoSei(): Promise<SessaoConsultaHistoricoSei> {
+  const baseUrl = process.env.SEI_BASE_URL?.trim() || "https://sei.ifpr.edu.br";
+  const headless = lerBooleano(process.env.SEI_HEADLESS, true);
+  let browser: Browser | undefined;
+  let context: BrowserContext | undefined;
+
+  try {
+    browser = await chromium.launch({ headless });
+    context = await browser.newContext();
+    const page = await context.newPage();
     return {
-      numero_processo: numeroProcesso,
-      sei_base_url: baseUrl,
-      sei_id_procedimento: await coletarIdProcedimentoProcesso(page),
-      historico: await coletarHistoricoProcesso(page),
+      consultar: (args) => consultarHistoricoProcessoNaPagina({ ...args, page, baseUrl }),
+      async fechar() {
+        await context?.close().catch(() => {});
+        await browser?.close().catch(() => {});
+      },
     };
+  } catch (error) {
+    await context?.close().catch(() => {});
+    await browser?.close().catch(() => {});
+    throw error;
+  }
+}
+
+export async function consultarHistoricoProcessoSei(args: { numeroProcesso: string }) {
+  const sessao = await abrirSessaoConsultaHistoricoSei();
+  try {
+    return await sessao.consultar(args);
   } finally {
-    await context.close().catch(() => {});
-    await browser.close().catch(() => {});
+    await sessao.fechar();
   }
 }
 
