@@ -84,21 +84,23 @@ Use `--quiet` para suprimir mensagens de progresso em `stderr`. Os logs do snaps
 
 ## Inspecionar um snapshot
 
-Depois de uma extração, use a pasta de execução como `<runDir>`:
+Depois de uma extração, use o número do processo para inspecionar automaticamente o snapshot mais recente na estrutura padrão `dados/sei/`. Também é possível informar diretamente uma pasta de execução como `<runDir>`:
 
 ```bash
-bun run sei inspecionar ultima-atualizacao <runDir>
-bun run sei inspecionar documentos <runDir> --ultimos 5
-bun run sei inspecionar historico <runDir> --ultimos 10
-bun run sei inspecionar historico-recente <runDir> --ultimos 4
+bun run sei inspecionar ultima-atualizacao 00000.000000/0000-00
+bun run sei inspecionar documentos <numero|runDir> --ultimos 5
+bun run sei inspecionar historico <numero|runDir> --ultimos 10
+bun run sei inspecionar historico-recente <numero|runDir> --ultimos 4
 bun run sei resumir movimentacao <runDir> --ultimos 4
 ```
+
+Snapshots criados fora da estrutura padrão com `--saida` precisam ser informados pelo `<runDir>`.
 
 Todos os comandos de inspeção aceitam `--json`:
 
 ```bash
-bun run sei inspecionar historico <runDir> --ultimos 50 --json
-bun run sei inspecionar historico-recente <runDir> --ultimos 4 --json
+bun run sei inspecionar historico <numero|runDir> --ultimos 50 --json
+bun run sei inspecionar historico-recente <numero|runDir> --ultimos 4 --json
 bun run sei resumir movimentacao <runDir> --ultimos 4 --json
 ```
 
@@ -189,10 +191,10 @@ Ao trabalhar com um snapshot gerado, comece por `<runDir>/processo.json` em vez 
 Comandos úteis para orientar uma análise:
 
 ```bash
-bun run sei inspecionar ultima-atualizacao <runDir> --json
-bun run sei inspecionar documentos <runDir> --ultimos 20 --json
-bun run sei inspecionar historico <runDir> --ultimos 50 --json
-bun run sei inspecionar historico-recente <runDir> --ultimos 4 --json
+bun run sei inspecionar ultima-atualizacao <numero|runDir> --json
+bun run sei inspecionar documentos <numero|runDir> --ultimos 20 --json
+bun run sei inspecionar historico <numero|runDir> --ultimos 50 --json
+bun run sei inspecionar historico-recente <numero|runDir> --ultimos 4 --json
 bun run sei resumir movimentacao <runDir> --ultimos 4 --json
 bun run sei verificar atualizacao processo 00000.000000/0000-00 --snapshot <runDir> --json
 ```

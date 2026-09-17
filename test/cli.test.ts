@@ -11,9 +11,10 @@ async function criarTempDir() {
   return dir;
 }
 
-async function rodarCli(args: string[]) {
-  const processo = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
-    cwd: process.cwd(),
+async function rodarCli(args: string[], cwd = process.cwd()) {
+  const caminhoCli = path.resolve(import.meta.dir, "../src/cli.ts");
+  const processo = Bun.spawn(["bun", "run", caminhoCli, ...args], {
+    cwd,
     stdout: "pipe",
     stderr: "pipe",
     env: {
@@ -247,6 +248,43 @@ describe("CLI", () => {
     expect(resultado.code).toBe(0);
     expect(resultado.stdout).toContain("01/06/26: Processo recebido na unidade (UNIDADE/A)");
     expect(resultado.stdout).toContain("31/05/26: Processo remetido pela unidade anterior (UNIDADE/B)");
+  });
+
+  test("inspeciona o snapshot mais recente usando apenas o número do processo", async () => {
+    const cwd = await criarTempDir();
+    const numeroProcesso = "00000.000000/0000-00";
+    const run = path.join(cwd, "dados", "sei", "00000.000000_0000-00", "2026-06-16T12-00-00");
+    await mkdir(run, { recursive: true });
+    await writeFile(
+      path.join(run, "processo.json"),
+      `${JSON.stringify({
+        versao_schema: 1,
+        numero_processo: numeroProcesso,
+        extraido_em: "2026-06-16T12:00:00.000Z",
+        origem: "diretorio-local",
+        historico: [],
+        documentos: [],
+        eventos: [],
+        artefatos: { diretorio_documentos: "documentos" },
+      })}\n`,
+      "utf-8",
+    );
+
+    const resultado = await rodarCli(["inspecionar", "ultima-atualizacao", numeroProcesso, "--json"], cwd);
+
+    expect(resultado.code).toBe(0);
+    expect(JSON.parse(resultado.stdout).numero_processo).toBe(numeroProcesso);
+  });
+
+  test("explica quando não há snapshot local para o número informado", async () => {
+    const cwd = await criarTempDir();
+    const resultado = await rodarCli(
+      ["inspecionar", "ultima-atualizacao", "00000.000000/0000-00"],
+      cwd,
+    );
+
+    expect(resultado.code).toBe(1);
+    expect(resultado.stderr).toContain("Nenhum snapshot local encontrado para o processo");
   });
 
   test("falha em lote sem números de processo", async () => {

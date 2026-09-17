@@ -224,6 +224,22 @@ async function carregarProcessoDeSnapshot(snapshot: string) {
   };
 }
 
+async function resolverSnapshotParaInspecao(valor: string) {
+  const valorNormalizado = valor.trim();
+  if (!PROCESSO_EXATO_RE.test(valorNormalizado)) {
+    return path.resolve(valor);
+  }
+
+  const numero = validarNumeroProcessoSei(valorNormalizado);
+  const snapshot = await encontrarSnapshotMaisRecenteProcesso(numero);
+  if (!snapshot) {
+    throw new Error(
+      `Nenhum snapshot local encontrado para o processo ${numero}. Informe o runDir ou extraia o processo primeiro.`,
+    );
+  }
+  return snapshot;
+}
+
 async function executarAtualizacaoProcesso(numeroProcesso: string, opcoes: OpcoesCli) {
   const numero = validarNumeroProcessoSei(numeroProcesso);
   const quantidade = validarQuantidade(opcoes.ultimos, 4);
@@ -552,10 +568,10 @@ function imprimirAjuda() {
   sei resumir movimentacao <numero|runDir> [--ultimos 4] [--snapshot <runDir>] [--snapshot-auto] [--atualizar] [--json]
   sei ler processo <numero> --zip <arquivo.zip> [--saida <dir>] [--json] [--resumo]
   sei ler processo <numero> --diretorio <dir> [--saida <dir>] [--json] [--resumo]
-  sei inspecionar ultima-atualizacao <runDir> [--json]
-  sei inspecionar documentos <runDir> [--ultimos 5] [--json]
-  sei inspecionar historico <runDir> [--ultimos 10] [--json] [--formato resumo]
-  sei inspecionar historico-recente <runDir> [--ultimos 4] [--json]
+  sei inspecionar ultima-atualizacao <numero|runDir> [--json]
+  sei inspecionar documentos <numero|runDir> [--ultimos 5] [--json]
+  sei inspecionar historico <numero|runDir> [--ultimos 10] [--json] [--formato resumo]
+  sei inspecionar historico-recente <numero|runDir> [--ultimos 4] [--json]
   sei verificar atualizacao processo <numero> --snapshot <runDir> [--json]
   sei localizar link <numero> [--json]
 
@@ -721,9 +737,9 @@ async function executar(args: string[]) {
 
   if (comando === "inspecionar") {
     if (!alvo || !valor) {
-      throw new Error("Uso esperado: sei inspecionar <consulta> <runDir>.");
+      throw new Error("Uso esperado: sei inspecionar <consulta> <numero|runDir>.");
     }
-    const snapshot = path.resolve(valor);
+    const snapshot = await resolverSnapshotParaInspecao(valor);
     const processo = await carregarProcessoParaInspecao(snapshot);
 
     if (alvo === "ultima-atualizacao") {
