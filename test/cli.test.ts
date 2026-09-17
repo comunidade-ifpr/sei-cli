@@ -124,12 +124,47 @@ describe("CLI", () => {
     const resultado = await rodarCli(["ajuda"]);
 
     expect(resultado.code).toBe(0);
+    expect(resultado.stdout).toContain("Uso: sei");
+    expect(resultado.stdout).toContain("Opções:");
+    expect(resultado.stdout).toContain("Comandos:");
     expect(resultado.stdout).toContain("sei extrair processo");
     expect(resultado.stdout).toContain("sei extrair lote");
     expect(resultado.stdout).toContain("sei extrair ultimas-movimentacoes lote");
     expect(resultado.stdout).toContain("sei resumir movimentacao");
     expect(resultado.stdout).toContain("sei verificar atualizacao processo");
     expect(resultado.stdout).toContain("Variáveis para extrair do SEI");
+  });
+
+  test("rejeita opções desconhecidas em português", async () => {
+    const resultado = await rodarCli(["inspecionar", "ultima-atualizacao", ".", "--desconhecida"]);
+
+    expect(resultado.code).toBe(1);
+    expect(resultado.stderr).toContain("Erro: opção desconhecida '--desconhecida'");
+  });
+
+  test("documenta argumentos obrigatórios na ajuda gerada", async () => {
+    const resultado = await rodarCli(["extrair", "processo", "--help"]);
+
+    expect(resultado.code).toBe(0);
+    expect(resultado.stdout).toContain("Uso: sei extrair processo [opções] <numero>");
+    expect(resultado.stdout).not.toContain("[numero]");
+  });
+
+  test("traduz erros de valores inválidos e opções sem argumento", async () => {
+    const formatoInvalido = await rodarCli([
+      "inspecionar",
+      "historico",
+      ".",
+      "--formato",
+      "outro",
+    ]);
+    const argumentoAusente = await rodarCli(["inspecionar", "documentos", ".", "--ultimos"]);
+
+    expect(formatoInvalido.code).toBe(1);
+    expect(formatoInvalido.stderr).toContain("recebeu o argumento inválido 'outro'");
+    expect(formatoInvalido.stderr).toContain("Valores permitidos: resumo");
+    expect(argumentoAusente.code).toBe(1);
+    expect(argumentoAusente.stderr).toContain("exige um argumento");
   });
 
   test("falha quando leitura local não recebe origem", async () => {
@@ -302,7 +337,7 @@ describe("CLI", () => {
     const resultado = await rodarCli(["extrair", "ultimas-movimentacoes", "lote", "--jsonl"]);
 
     expect(resultado.code).toBe(1);
-    expect(resultado.stderr).toContain("Uso esperado: sei extrair ultimas-movimentacoes lote");
+    expect(resultado.stderr).toContain("Erro: argumento obrigatório ausente 'arquivo'");
   });
 
   test("falha em lote de últimas movimentações sem números de processo", async () => {
@@ -332,5 +367,37 @@ describe("CLI", () => {
 
     expect(resultado.code).toBe(1);
     expect(resultado.stderr).toContain("Não use --saida com extração em lote");
+  });
+
+  test("preserva opções do subcomando de últimas movimentações em lote", async () => {
+    const base = await criarTempDir();
+    const arquivo = path.join(base, "processos.txt");
+    await writeFile(arquivo, "00000.000000/0000-00\n", "utf-8");
+
+    const resultado = await rodarCli([
+      "extrair",
+      "ultimas-movimentacoes",
+      "lote",
+      arquivo,
+      "--saida",
+      path.join(base, "saida"),
+      "--json",
+      "--quiet",
+    ]);
+
+    expect(resultado.code).toBe(1);
+    expect(resultado.stderr).toContain("Não use --saida com extração de últimas movimentações em lote");
+  });
+
+  test("rejeita opções exclusivas de lote na consulta unitária", async () => {
+    const resultado = await rodarCli([
+      "extrair",
+      "ultimas-movimentacoes",
+      "00000.000000/0000-00",
+      "--jsonl",
+    ]);
+
+    expect(resultado.code).toBe(1);
+    expect(resultado.stderr).toContain("Erro: opção desconhecida '--jsonl'");
   });
 });
